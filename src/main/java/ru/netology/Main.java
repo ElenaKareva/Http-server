@@ -9,7 +9,6 @@ public class Main {
 
     Server server = new Server(THREADS_COUNT);
     server.serverOn(PORT);
-
   }
 }
 

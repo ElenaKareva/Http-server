@@ -25,79 +25,85 @@ public class Server {
     }
 
     public void serverOn(int port) {
-        try {
-            final var serverSocket = new ServerSocket(port);
-            final var socket = serverSocket.accept();
-            threadPool.submit(() -> handling(socket));
+        try (
+                final var serverSocket = new ServerSocket(port)) {
+            while (true) {
+                final var socket = serverSocket.accept();
+                threadPool.submit(() -> handling(socket));
+            }
+        } catch (IOException ioException) {
+            ioException.printStackTrace();
+        }
+    }
+
+    public void handling(Socket socket) {
+        try (
+                socket;
+                final var in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                final var out = new BufferedOutputStream(socket.getOutputStream());
+        ) {
+            // read only request line for simplicity
+            // must be in form GET /path HTTP/1.1
+            final String[] parts = getResponsePartsFromRequest(in);
+            final var path = parts[1];
+
+            if (parts.length != 3) {
+
+                // just close socket
+
+            } else if (!validPaths.contains(path)) {
+                errorResponse(out);
+            } else {
+                getTrueResponse(out, path);
+            }
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    public void handling(Socket socket) {
-        while (true) {
-            try (
 
-                    final var in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                    final var out = new BufferedOutputStream(socket.getOutputStream());
-            ) {
-                // read only request line for simplicity
-                // must be in form GET /path HTTP/1.1
-                final var requestLine = in.readLine();
-                final var parts = requestLine.split(" ");
+    private String[] getResponsePartsFromRequest(BufferedReader in) throws IOException {
+        final var requestLine = in.readLine();
+        final var parts = requestLine.split(" ");
+        return parts;
+    }
 
-                if (parts.length != 3) {
-                    // just close socket
-                    continue;
-                }
 
-                final var path = parts[1];
-                if (!validPaths.contains(path)) {
-                    out.write((
-                            "HTTP/1.1 404 Not Found\r\n" +
-                                    "Content-Length: 0\r\n" +
-                                    "Connection: close\r\n" +
-                                    "\r\n"
-                    ).getBytes());
-                    out.flush();
-                    continue;
-                }
+    private void errorResponse(BufferedOutputStream out) throws IOException {
+        String response = "HTTP/1.1 404 Not Found\r\n" +
+                "Content-Length: 0\r\n" +
+                "Connection: close\r\n" +
+                "\r\n";
+        out.write(response.getBytes());
+        out.flush();
+    }
 
-                final var filePath = Path.of(".", "public", path);
-                final var mimeType = Files.probeContentType(filePath);
+    private String okResponse(String mimeType, long length) {
+        return "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: " + mimeType + "\r\n" +
+                "Content-Length: " + length + "\r\n" +
+                "Connection: close\r\n" +
+                "\r\n";
+    }
 
-                // special case for classic
-                if (path.equals("/classic.html")) {
-                    final var template = Files.readString(filePath);
-                    final var content = template.replace(
-                            "{time}",
-                            LocalDateTime.now().toString()
-                    ).getBytes();
-                    out.write((
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Content-Type: " + mimeType + "\r\n" +
-                                    "Content-Length: " + content.length + "\r\n" +
-                                    "Connection: close\r\n" +
-                                    "\r\n"
-                    ).getBytes());
-                    out.write(content);
-                    out.flush();
-                    continue;
-                }
 
-                final var length = Files.size(filePath);
-                out.write((
-                        "HTTP/1.1 200 OK\r\n" +
-                                "Content-Type: " + mimeType + "\r\n" +
-                                "Content-Length: " + length + "\r\n" +
-                                "Connection: close\r\n" +
-                                "\r\n"
-                ).getBytes());
-                Files.copy(filePath, out);
-                out.flush();
-            } catch (IOException ioException) {
-                ioException.printStackTrace();
-            }
+    private void getTrueResponse(BufferedOutputStream out, String path) throws IOException {
+        var filePath = Path.of(".", "public", path);
+        var mimeType = Files.probeContentType(filePath);
+        // special case for classic
+        if (path.equals("/classic.html")) {
+            final var template = Files.readString(filePath);
+            final var content = template.replace(
+                    "{time}",
+                    LocalDateTime.now().toString()
+            ).getBytes();
+            out.write(okResponse(mimeType, content.length).getBytes());
+            out.write(content);
+        } else {
+            final var length = Files.size(filePath);
+            out.write(okResponse(mimeType, length).getBytes());
+            Files.copy(filePath, out);
         }
+        out.flush();
     }
 }
